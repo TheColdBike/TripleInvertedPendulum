@@ -10,13 +10,16 @@ p.L3 = 1; % Pendulum 3 Length (m)
 p.I1 = 5; % Pendulum 1 Inertia (kg*m^2)
 p.I2 = 5; % Pendulum 2 Inertia (kg*m^2)
 p.I3 = 5; % Pendulum 3 Inertia (kg*m^2)
-p.d1 = .01; % Cart Damping Ratio
-p.d2 = .01; % Pendulum 1 Damping Ratio
-p.d3 = .01; % Pendulum 2 Damping Ratio
-p.d4 = .01; % Pendulum 3 Damping Ratio
+p.d1 = .1; % Cart Damping Ratio
+p.d2 = .5; % Pendulum 1 Damping Ratio
+p.d3 = .5; % Pendulum 2 Damping Ratio
+p.d4 = .5; % Pendulum 3 Damping Ratio
 p.Wr = .08; % Wheel Radius
 p.Ch = .5; % Cart Height
 p.g = 9.81; % Gravity
+
+timeStep = 0.01; 
+endTime = 10; 
 
 % Symbolic Variables
 syms x a b c xD aD bD cD xDD aDD bDD cDD real; 
@@ -36,8 +39,6 @@ rhs = [u - (m2*(2*L1*aD^2*sin(a) + L2*sin(a + b)*(aD + bD)^2))/2 - d1*xD - (m3*(
 (L2*g*m2*sin(a + b))/2 - (L1^2*m1*sin(2*a))/8 - aD*d2 + L2*g*m3*sin(a + b) + (L1*g*m1*sin(a))/2 + L1*g*m2*sin(a) + L1*g*m3*sin(a) + (L1^2*aD^2*m1*sin(2*a))/8 + (L3*g*m3*sin(a + b + c))/2 + (L1*L3*bD^2*m3*sin(b + c))/2 + (L1*L3*cD^2*m3*sin(b + c))/2 + (L1*L2*bD^2*m2*sin(b))/2 + L1*L2*bD^2*m3*sin(b) + (L2*L3*cD^2*m3*sin(c))/2 + L2*L3*bD*cD*m3*sin(c) + L1*L3*aD*bD*m3*sin(b + c) + L1*L3*aD*cD*m3*sin(b + c) + L1*L3*bD*cD*m3*sin(b + c) + L1*L2*aD*bD*m2*sin(b) + 2*L1*L2*aD*bD*m3*sin(b) + L2*L3*aD*cD*m3*sin(c) ; ...
 (L2*g*m2*sin(a + b))/2 - bD*d3 + L2*g*m3*sin(a + b) + (L3*g*m3*sin(a + b + c))/2 - (L1*L3*aD^2*m3*sin(b + c))/2 - (L1*L2*aD^2*m2*sin(b))/2 - L1*L2*aD^2*m3*sin(b) + (L2*L3*cD^2*m3*sin(c))/2 + L2*L3*bD*cD*m3*sin(c) + L2*L3*aD*cD*m3*sin(c) ; ...
 (L3*g*m3*sin(a + b + c))/2 - cD*d4 - (L1*L3*aD^2*m3*sin(b + c))/2 - (L2*L3*aD^2*m3*sin(c))/2 - (L2*L3*bD^2*m3*sin(c))/2 - L2*L3*aD*bD*m3*sin(c)]; 
- 
-u_func = @(t, q) 0; 
 
 % Functions for M and rhs
 Mfunc = matlabFunction(M_, ...
@@ -49,17 +50,46 @@ rhsfunc = matlabFunction(rhs, ...
              M, m1, m2, m3, I1, I2, I3, L1, L2, L3, g, d1, d2, d3, d4});
 
 % Initial Conditions
-q0 = [0 ; 0 ; 0.01 ; 0 ; .01 ; 0 ; .1 ; 0]; 
-tspan = 0:.01:100; 
+q0 = [0 ; 0 ; .2 ; 0 ; 0 ; 0 ; 0 ; 0]; 
+tspan = 0:timeStep:endTime; 
+N = length(tspan); 
 
-% Numeric Solver
-[tSol, qSol] = ode45(@(t, q) diffQ(t, q, p, Mfunc, rhsfunc, u_func), ...
-                     tspan, q0);
+% Linearized System Definitions
+qop = [0; 0; 0; 0; 0; 0; 0; 0];
+uop = 0;
+
+A = ACalcNumerical(qop, uop, p, Mfunc, rhsfunc);
+B = BCalcNumerical(qop, uop, p, Mfunc, rhsfunc);
+C = [1 0 0 0 0 0 0 0; 0 0 1 0 0 0 0 0 ; 0 0 0 0 1 0 0 0 ; 0 0 0 0 0 0 1 0]; 
+D = eye(4); 
+
+%% LQR Controller Definition
+Q = diag([100, 10, 100, 10, 100, 10, 100, 10]); 
+R = 0.1; 
+K = lqr(A, B, Q, R, 0); 
+
+% Preallocation
+qTrue = zeros(8, N); 
+uHist = zeros(1, N); 
+
+qTrue(:, 1) = q0; 
+uHist(1) = 0; 
+operationState = [0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0]; 
+
+for k = 1:N-1
+    u_k = (-K * (qTrue(:,k) - qop))/abs(-K * (qTrue(:,k) - qop))*max(abs(-K * (qTrue(:,k) - qop)), 50);
+    uHist(k) = u_k;
+
+    [~, qtmp] = ode45(@(tt,xx) diffQ(tt, xx, p, Mfunc, rhsfunc, u_k), [tspan(k) tspan(k+1)], qTrue(:,k));
+    qTrue(:,k+1) = qtmp(end,:).';
+end
+uHist(N) = uHist(N-1); 
+
 % Cart Position
 figure; 
 hold on
 grid on
-plot(tSol, qSol(:, 1)); 
+plot(tspan, qTrue(1, :)); 
 title("x over time"); 
 ylabel("x (m)"); 
 xlabel("t (s)"); 
@@ -69,8 +99,8 @@ hold off
 figure; 
 hold on
 grid on
-plot(tSol, qSol(:, 2)); 
-title("x_dot over time"); 
+plot(tspan, qTrue(2, :)); 
+title("Cart Velocity over time"); 
 ylabel("x_dot (m/s)"); 
 xlabel("t (s)"); 
 hold off
@@ -79,7 +109,7 @@ hold off
 figure; 
 hold on
 grid on
-plot(tSol, qSol(:, 3) * 180 / pi); 
+plot(tspan, qTrue(3, :) * 180 / pi); 
 title("Angle 1 over time"); 
 ylabel("Angle (rad)"); 
 xlabel("t (s)"); 
@@ -89,7 +119,7 @@ hold off
 figure; 
 hold on
 grid on
-plot(tSol, qSol(:, 4)); 
+plot(tspan, qTrue(4, :) * 180/pi); 
 title("Anglular Velocity 1 over time"); 
 ylabel("Anglular Velocity (rad/s)"); 
 xlabel("t (s)"); 
@@ -99,7 +129,7 @@ hold off
 figure; 
 hold on
 grid on
-plot(tSol, qSol(:, 5)); 
+plot(tspan, qTrue(5, :) * 180/pi); 
 title("Angle 2 over time"); 
 ylabel("Angle (rad)"); 
 xlabel("t (s)"); 
@@ -109,7 +139,7 @@ hold off
 figure; 
 hold on
 grid on
-plot(tSol, qSol(:, 6)); 
+plot(tspan, qTrue(6, :) * 180/pi); 
 title("Anglular Velocity 2 over time"); 
 ylabel("Anglular Velocity (rad/s)"); 
 xlabel("t (s)"); 
@@ -119,7 +149,7 @@ hold off
 figure; 
 hold on
 grid on
-plot(tSol, qSol(:, 7)); 
+plot(tspan, qTrue(7, :) * 180/pi); 
 title("Angle 3 over time"); 
 ylabel("Angle (rad)"); 
 xlabel("t (s)"); 
@@ -129,14 +159,14 @@ hold off
 figure; 
 hold on
 grid on
-plot(tSol, qSol(:, 8)); 
+plot(tspan, qTrue(8, :) * 180/pi); 
 title("Anglular Velocity 3 over time"); 
 ylabel("Anglular Velocity (rad/s)"); 
 xlabel("t (s)"); 
 hold off
 
 % Animation call
-animateTripleCartPendulum(tSol, qSol, p);
+animateTripleCartPendulum(tspan, qTrue, p);
 
 function dq = diffQ(t, q, p, Mfunc, rhsfunc, ufunc)
     x = q(1); 
@@ -148,7 +178,7 @@ function dq = diffQ(t, q, p, Mfunc, rhsfunc, ufunc)
     c = q(7); 
     cD = q(8); 
 
-    u = ufunc(t, q); 
+    u = ufunc; 
 
     % Evaluate mass matrix
     Mnum = Mfunc(x, a, b, c, ...
@@ -166,13 +196,13 @@ function dq = diffQ(t, q, p, Mfunc, rhsfunc, ufunc)
     dq = [xD; qDD(1); aD; qDD(2); bD; qDD(3); cD; qDD(4)];
 end
 
-function animateTripleCartPendulum(tSol, qSol, p)
+function animateTripleCartPendulum(tspan, qTrue, p)
 
     % States
-    x = qSol(:,1);
-    a = qSol(:,3);
-    b = qSol(:,5);
-    c = qSol(:,7);
+    x = qTrue(1, :);
+    a = qTrue(3, :);
+    b = qTrue(5, :);
+    c = qTrue(7, :);
 
     % Link lengths
     L1 = p.L1;
@@ -204,10 +234,10 @@ function animateTripleCartPendulum(tSol, qSol, p)
     grid on;
 
     % Plot bounds
-    xmin = min([x0; x1; x2; x3]) - 1;
-    xmax = max([x0; x1; x2; x3]) + 1;
-    ymin = min([y0; y1; y2; y3]) - 1;
-    ymax = max([y0; y1; y2; y3]) + 1;
+    xmin = min([x0 x1 x2 x3]) - 1;
+    xmax = max([x0 x1 x2 x3]) + 1;
+    ymin = min([y0 y1 y2 y3]) - 1;
+    ymax = max([y0 y1 y2 y3]) + 1;
 
     xlim([xmin xmax]);
     ylim([ymin ymax]);
@@ -239,10 +269,10 @@ function animateTripleCartPendulum(tSol, qSol, p)
     joint2 = plot(x2(1), y2(1), 'go', 'MarkerSize', 8, 'MarkerFaceColor', 'g');
     joint3 = plot(x3(1), y3(1), 'bo', 'MarkerSize', 8, 'MarkerFaceColor', 'b');
 
-    titleHandle = title(sprintf('t = %.2f s', tSol(1)));
+    titleHandle = title(sprintf('t = %.2f s', tspan(1)));
 
     % Animate
-    for k = 1:length(tSol)
+    for k = 1:length(tspan)
 
         % Cart
         cartX = x0(k) - cartW/2;
@@ -265,8 +295,68 @@ function animateTripleCartPendulum(tSol, qSol, p)
         set(joint2, 'XData', x2(k), 'YData', y2(k));
         set(joint3, 'XData', x3(k), 'YData', y3(k));
 
-        set(titleHandle, 'String', sprintf('t = %.2f s', tSol(k)));
+        set(titleHandle, 'String', sprintf('t = %.2f s', tspan(k)));
 
         drawnow;
     end
+end
+
+% A Calculation
+function A = ACalcNumerical(Xop, uop, p, Mfunc, rhsfunc)
+    fX = @(X) stateDerivative(X, uop, p, Mfunc, rhsfunc);
+    A = numericalJacobian(fX, Xop);
+end
+
+% B Calculation
+function B = BCalcNumerical(Xop, uop, p, Mfunc, rhsfunc)
+    epsVal = 1e-6;
+    B = (stateDerivative(Xop, uop + epsVal, p, Mfunc, rhsfunc) - ...
+         stateDerivative(Xop, uop - epsVal, p, Mfunc, rhsfunc)) / (2*epsVal);
+end
+
+% Jacobian Calculation
+function J = numericalJacobian(fun, x)
+    n = length(x);
+    fx = fun(x);
+    m = length(fx);
+    J = zeros(m, n);
+
+    epsVal = 1e-6;
+
+    for i = 1:n
+        dx = zeros(n,1);
+        dx(i) = epsVal;
+
+        J(:,i) = (fun(x + dx) - fun(x - dx)) / (2*epsVal);
+    end
+end
+
+function dx = stateDerivative(X, u, p, Mfunc, rhsfunc)
+
+    x  = X(1);
+    xD = X(2);
+    a  = X(3);
+    aD = X(4);
+    b  = X(5);
+    bD = X(6);
+    c  = X(7);
+    cD = X(8);
+
+    Mnum = Mfunc(x, a, b, c, ...
+        p.M, p.m1, p.m2, p.m3, p.I1, p.I2, p.I3, p.L1, p.L2, p.L3);
+
+    rhsnum = rhsfunc(x, xD, a, aD, b, bD, c, cD, u, ...
+        p.M, p.m1, p.m2, p.m3, p.I1, p.I2, p.I3, p.L1, p.L2, p.L3, ...
+        p.g, p.d1, p.d2, p.d3, p.d4);
+
+    qDD = Mnum \ rhsnum;
+
+    dx = [xD;
+          qDD(1);
+          aD;
+          qDD(2);
+          bD;
+          qDD(3);
+          cD;
+          qDD(4)];
 end
