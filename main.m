@@ -75,7 +75,6 @@ uHist = zeros(1, N);
 
 qTrue(:, 1) = q0; 
 uHist(1) = 0; 
-operationState = [0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0]; 
 
 xHat = [0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0];
 P = 0.1*eye(8);
@@ -406,10 +405,12 @@ function dx = stateDerivative(X, u, p, Mfunc, rhsfunc)
 end
 
 function Xnext = processModelUKF(X, u, Ts, p, Mfunc, rhsfunc)
+    k1 = stateDerivative(X, u, p, Mfunc, rhsfunc);
+    k2 = stateDerivative(X + 0.5*Ts*k1, u, p, Mfunc, rhsfunc);
+    k3 = stateDerivative(X + 0.5*Ts*k2, u, p, Mfunc, rhsfunc);
+    k4 = stateDerivative(X + Ts*k3, u, p, Mfunc, rhsfunc);
 
-    [~, Xtmp] = ode45(@(t,xx) stateDerivative(xx, u, p, Mfunc, rhsfunc), [0 Ts], X);
-    Xnext = Xtmp(end,:).';
-
+    Xnext = X + (Ts/6)*(k1 + 2*k2 + 2*k3 + k4);
 end
 
 function y = measurementModelUKF(X)
