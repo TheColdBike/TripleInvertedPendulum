@@ -1,25 +1,26 @@
 clear; clc; 
 
-p.M = 10; % Cart Mass (kg)
-p.m1 = 2; % Pendulum 1 Mass (kg)
-p.m2 = 2; % Pendulm 2 Mass (kg)
-p.m3 = 2; % Pendulum 3 Mass (kg)
-p.L1 = 1; % Pendulum 1 Length (m)
-p.L2 = 1; % Pendulum 2 Length (m)
-p.L3 = 1; % Pendulum 3 Length (m)
-p.I1 = 5; % Pendulum 1 Inertia (kg*m^2)
-p.I2 = 5; % Pendulum 2 Inertia (kg*m^2)
-p.I3 = 5; % Pendulum 3 Inertia (kg*m^2)
-p.d1 = .1; % Cart Damping Ratio
-p.d2 = .5; % Pendulum 1 Damping Ratio
-p.d3 = .5; % Pendulum 2 Damping Ratio
-p.d4 = .5; % Pendulum 3 Damping Ratio
+p.M = .969; % Cart Mass (kg)
+p.m1 = .204; % Pendulum 1 Mass (kg)
+p.m2 = .15; % Pendulm 2 Mass (kg)
+p.m3 = .07; % Pendulum 3 Mass (kg)
+p.L1 = .25; % Pendulum 1 Length (m)
+p.L2 = .2; % Pendulum 2 Length (m)
+p.L3 = .15; % Pendulum 3 Length (m)
+p.I1 = .001688; % Pendulum 1 Inertia (kg*m^2)
+p.I2 = .0011; % Pendulum 2 Inertia (kg*m^2)
+p.I3 = .0003; % Pendulum 3 Inertia (kg*m^2)
+p.d1 = .5; % Cart Damping Ratio
+p.d2 = .01; % Pendulum 1 Damping Ratio
+p.d3 = .01; % Pendulum 2 Damping Ratio
+p.d4 = .01; % Pendulum 3 Damping Ratio
 p.Wr = .08; % Wheel Radius
 p.Ch = .5; % Cart Height
 p.g = 9.81; % Gravity
 
 timeStep = 0.01; 
-endTime = 10; 
+endTime = 20; 
+dynamicsOnly = 1; 
 
 % Symbolic Variables
 syms x a b c xD aD bD cD xDD aDD bDD cDD real; 
@@ -50,7 +51,7 @@ rhsfunc = matlabFunction(rhs, ...
              M, m1, m2, m3, I1, I2, I3, L1, L2, L3, g, d1, d2, d3, d4});
 
 % Initial Conditions
-q0 = [0 ; 0 ; .15 ; 0 ; 0.1 ; 0 ; 0 ; 0]; 
+q0 = [0 ; 0 ; .1 ; 0 ; 0 ; 0 ; 0 ; 0]; 
 tspan = 0:timeStep:endTime; 
 N = length(tspan); 
 
@@ -76,12 +77,29 @@ qTrue(:, 1) = q0;
 uHist(1) = 0; 
 operationState = [0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0]; 
 
+xHat = [0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0 ; 0];
+P = 0.1*eye(8);
+
+Qukf = 1e-4*eye(8);   % process noise covariance
+Rukf = diag([1e-3, 1e-3, 1e-3, 1e-3]);  % measurement noise covariance
+
+xHatHist = zeros(8, N); 
+xHatHist(:, 1) = xHat; 
+
 for k = 1:N-1
-    u_k = max(abs(-K * (qTrue(:,k) - qop)), 50);
+    u_k = ((-K * (qTrue(:,k) - qop))/abs(-K * (qTrue(:,k) - qop))*max(abs(-K * (qTrue(:,k) - qop)), 50) + randn)*dynamicsOnly;
     uHist(k) = u_k;
 
     [~, qtmp] = ode45(@(tt,xx) diffQ(tt, xx, p, Mfunc, rhsfunc, u_k), [tspan(k) tspan(k+1)], qTrue(:,k));
     qTrue(:,k+1) = qtmp(end,:).';
+
+    % Generate noisy measurement
+    yMeas = measurementModelUKF(qTrue(:,k+1)) + chol(Rukf,'lower')*randn(4,1);
+
+    % UKF predict/update
+    [xHat, P] = ukfStep(xHat, P, u_k, yMeas, timeStep, Qukf, Rukf, p, Mfunc, rhsfunc);
+
+    xHatHist(:,k+1) = xHat;
 end
 uHist(N) = uHist(N-1); 
 
@@ -90,6 +108,8 @@ figure;
 hold on
 grid on
 plot(tspan, qTrue(1, :)); 
+plot(tspan, xHatHist(1, :)); 
+legend("True State", "UKF"); 
 title("x over time"); 
 ylabel("x (m)"); 
 xlabel("t (s)"); 
@@ -100,6 +120,8 @@ figure;
 hold on
 grid on
 plot(tspan, qTrue(2, :)); 
+plot(tspan, xHatHist(2, :)); 
+legend("True State", "UKF"); 
 title("Cart Velocity over time"); 
 ylabel("x_dot (m/s)"); 
 xlabel("t (s)"); 
@@ -110,6 +132,8 @@ figure;
 hold on
 grid on
 plot(tspan, qTrue(3, :) * 180 / pi); 
+plot(tspan, xHatHist(3, :)*180/pi); 
+legend("True State", "UKF"); 
 title("Angle 1 over time"); 
 ylabel("Angle (rad)"); 
 xlabel("t (s)"); 
@@ -120,6 +144,8 @@ figure;
 hold on
 grid on
 plot(tspan, qTrue(4, :) * 180/pi); 
+plot(tspan, xHatHist(4, :)*180/pi); 
+legend("True State", "UKF"); 
 title("Anglular Velocity 1 over time"); 
 ylabel("Anglular Velocity (rad/s)"); 
 xlabel("t (s)"); 
@@ -130,6 +156,8 @@ figure;
 hold on
 grid on
 plot(tspan, qTrue(5, :) * 180/pi); 
+plot(tspan, xHatHist(5, :) * 180/pi); 
+legend("True State", "UKF"); 
 title("Angle 2 over time"); 
 ylabel("Angle (rad)"); 
 xlabel("t (s)"); 
@@ -140,6 +168,8 @@ figure;
 hold on
 grid on
 plot(tspan, qTrue(6, :) * 180/pi); 
+plot(tspan, xHatHist(6, :) * 180/pi); 
+legend("True State", "UKF"); 
 title("Anglular Velocity 2 over time"); 
 ylabel("Anglular Velocity (rad/s)"); 
 xlabel("t (s)"); 
@@ -150,6 +180,8 @@ figure;
 hold on
 grid on
 plot(tspan, qTrue(7, :) * 180/pi); 
+plot(tspan, xHatHist(7, :) * 180/pi); 
+legend("True State", "UKF"); 
 title("Angle 3 over time"); 
 ylabel("Angle (rad)"); 
 xlabel("t (s)"); 
@@ -160,6 +192,8 @@ figure;
 hold on
 grid on
 plot(tspan, qTrue(8, :) * 180/pi); 
+plot(tspan, xHatHist(8, :) * 180/pi); 
+legend("True State", "UKF"); 
 title("Anglular Velocity 3 over time"); 
 ylabel("Anglular Velocity (rad/s)"); 
 xlabel("t (s)"); 
@@ -359,4 +393,106 @@ function dx = stateDerivative(X, u, p, Mfunc, rhsfunc)
           qDD(3);
           cD;
           qDD(4)];
+end
+
+function Xnext = processModelUKF(X, u, Ts, p, Mfunc, rhsfunc)
+
+    [~, Xtmp] = ode45(@(t,xx) stateDerivative(xx, u, p, Mfunc, rhsfunc), [0 Ts], X);
+    Xnext = Xtmp(end,:).';
+
+end
+
+function y = measurementModelUKF(X)
+    y = [X(1);
+         X(3);
+         X(5);
+         X(7)];
+end
+
+function [xHatNew, PNew] = ukfStep(xHat, P, u, y, Ts, Q, R, p, Mfunc, rhsfunc)
+
+    n = length(xHat);
+
+    alpha = 1e-3;
+    beta  = 2;
+    kappa = 0;
+
+    lambda = alpha^2*(n + kappa) - n;
+    gamma = sqrt(n + lambda);
+
+    % Weights
+    Wm = zeros(2*n+1,1);
+    Wc = zeros(2*n+1,1);
+
+    Wm(1) = lambda/(n+lambda);
+    Wc(1) = lambda/(n+lambda) + (1 - alpha^2 + beta);
+
+    for i = 2:2*n+1
+        Wm(i) = 1/(2*(n+lambda));
+        Wc(i) = 1/(2*(n+lambda));
+    end
+
+    % Sigma points
+    S = chol(P, 'lower');
+    Xsigma = zeros(n, 2*n+1);
+    Xsigma(:,1) = xHat;
+
+    for i = 1:n
+        Xsigma(:,i+1)   = xHat + gamma*S(:,i);
+        Xsigma(:,i+1+n) = xHat - gamma*S(:,i);
+    end
+
+    % Predict sigma points through process model
+    XsigmaPred = zeros(n, 2*n+1);
+    for i = 1:2*n+1
+        XsigmaPred(:,i) = processModelUKF(Xsigma(:,i), u, Ts, p, Mfunc, rhsfunc);
+    end
+
+    % Predicted mean
+    xPred = zeros(n,1);
+    for i = 1:2*n+1
+        xPred = xPred + Wm(i)*XsigmaPred(:,i);
+    end
+
+    % Predicted covariance
+    PPred = zeros(n);
+    for i = 1:2*n+1
+        dx = XsigmaPred(:,i) - xPred;
+        PPred = PPred + Wc(i)*(dx*dx.');
+    end
+    PPred = PPred + Q;
+
+    % Predicted measurements
+    m = length(y);
+    Ysigma = zeros(m, 2*n+1);
+    for i = 1:2*n+1
+        Ysigma(:,i) = measurementModelUKF(XsigmaPred(:,i));
+    end
+
+    yPred = zeros(m,1);
+    for i = 1:2*n+1
+        yPred = yPred + Wm(i)*Ysigma(:,i);
+    end
+
+    % Measurement covariance
+    Pyy = zeros(m);
+    for i = 1:2*n+1
+        dy = Ysigma(:,i) - yPred;
+        Pyy = Pyy + Wc(i)*(dy*dy.');
+    end
+    Pyy = Pyy + R;
+
+    % Cross covariance
+    Pxy = zeros(n,m);
+    for i = 1:2*n+1
+        dx = XsigmaPred(:,i) - xPred;
+        dy = Ysigma(:,i) - yPred;
+        Pxy = Pxy + Wc(i)*(dx*dy.');
+    end
+
+    % Gain and update
+    Kgain = Pxy / Pyy;
+
+    xHatNew = xPred + Kgain*(y - yPred);
+    PNew = PPred - Kgain*Pyy*Kgain.';
 end
