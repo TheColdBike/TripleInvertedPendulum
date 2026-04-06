@@ -51,7 +51,7 @@ rhsfunc = matlabFunction(rhs, ...
              M, m1, m2, m3, I1, I2, I3, L1, L2, L3, g, d1, d2, d3, d4});
 
 % Initial Conditions
-q0 = [0 ; 0 ; .1 ; 0 ; 0 ; 0 ; 0 ; 0]; 
+q0 = [0 ; 0 ; .15 ; 0 ; 0 ; 0 ; 0 ; 0]; 
 tspan = 0:timeStep:endTime; 
 N = length(tspan); 
 
@@ -65,8 +65,8 @@ C = [1 0 0 0 0 0 0 0; 0 0 1 0 0 0 0 0 ; 0 0 0 0 1 0 0 0 ; 0 0 0 0 0 0 1 0];
 D = eye(4); 
 
 %% LQR Controller Definition
-Q = diag([100, 10, 100, 10, 100, 10, 100, 10]); 
-R = 0.1; 
+Q = diag([100, 10, 25, 10, 25, 10, 25, 10]); 
+R = 50; 
 K = lqr(A, B, Q, R, 0); 
 
 % Preallocation
@@ -87,7 +87,7 @@ xHatHist = zeros(8, N);
 xHatHist(:, 1) = xHat; 
 
 for k = 1:N-1
-    u_k = ((-K * (qTrue(:,k) - qop))/abs(-K * (qTrue(:,k) - qop))*max(abs(-K * (qTrue(:,k) - qop)), 50) + randn)*dynamicsOnly;
+    u_k = (-K * (qTrue(:,k) - qop) + randn)*dynamicsOnly;
     uHist(k) = u_k;
 
     [~, qtmp] = ode45(@(tt,xx) diffQ(tt, xx, p, Mfunc, rhsfunc, u_k), [tspan(k) tspan(k+1)], qTrue(:,k));
@@ -123,7 +123,7 @@ plot(tspan, qTrue(2, :));
 plot(tspan, xHatHist(2, :)); 
 legend("True State", "UKF"); 
 title("Cart Velocity over time"); 
-ylabel("x_dot (m/s)"); 
+ylabel("Velocity (m/s)"); 
 xlabel("t (s)"); 
 hold off
 
@@ -196,6 +196,16 @@ plot(tspan, xHatHist(8, :) * 180/pi);
 legend("True State", "UKF"); 
 title("Anglular Velocity 3 over time"); 
 ylabel("Anglular Velocity (rad/s)"); 
+xlabel("t (s)"); 
+hold off
+
+% Input Force
+figure; 
+hold on
+grid on
+plot(tspan, uHist); 
+title("Input Force over Time"); 
+ylabel("Input Force (N)"); 
 xlabel("t (s)"); 
 hold off
 
